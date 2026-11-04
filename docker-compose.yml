@@ -1,0 +1,38 @@
+# Production-style stack: Caddy (automatic HTTPS) -> TSS MDM -> PostgreSQL
+# 1. cp .env.example .env   and fill it in
+# 2. point a DNS record (e.g. mdm.thesouledstore.com) at this server
+# 3. docker compose up -d --build
+# 4. docker compose logs mdm | grep "Super admin"   (or set MDM_SUPERADMIN_PASSWORD in .env)
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mdm
+      POSTGRES_USER: mdm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mdm"]
+      interval: 5s
+      retries: 10
+
+  mdm:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MDM_DATABASE_URL: postgresql+psycopg://mdm:${POSTGRES_PASSWORD}@db:5432/mdm
+    volumes: [mdmdata:/data]
+    depends_on:
+      db: { condition: service_healthy }
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    command: caddy reverse-proxy --from ${MDM_DOMAIN:?set MDM_DOMAIN in .env} --to mdm:8000
+    volumes: [caddydata:/data]
+    depends_on: [mdm]
+
+volumes: { pgdata: {}, mdmdata: {}, caddydata: {} }

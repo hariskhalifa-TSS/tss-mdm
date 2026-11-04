@@ -1,0 +1,9 @@
+.env
+server/data/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+server/.venv/
+start-log.txt
+*.db
