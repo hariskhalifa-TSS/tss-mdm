@@ -36,7 +36,7 @@ class Settings:
     ACCESS_TOKEN_MINUTES = int(os.getenv("MDM_ACCESS_TOKEN_MINUTES", "480"))
     OFFLINE_AFTER_MINUTES = int(os.getenv("MDM_OFFLINE_AFTER_MINUTES", "15"))
     CHECKIN_INTERVAL_SECONDS = int(os.getenv("MDM_CHECKIN_INTERVAL_SECONDS", "300"))
-    MAX_FAILED_LOGINS = int(os.getenv("MDM_MAX_FAILED_LOGINS", "5"))
+    MAX_FAILED_LOGINS = int(os.getenv("MDM_MAX_FAILED_LOGINS", "0"))  # 0 = lockout disabled
     LOCKOUT_MINUTES = int(os.getenv("MDM_LOCKOUT_MINUTES", "15"))
     SUPERADMIN_EMAIL = os.getenv("MDM_SUPERADMIN_EMAIL", "admin@example.com")
     SUPERADMIN_NAME = os.getenv("MDM_SUPERADMIN_NAME", "Super Admin")

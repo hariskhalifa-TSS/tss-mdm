@@ -34,11 +34,13 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
         audit(db, request, email, "auth.login_failed", reason="unknown_or_disabled")
         db.commit()
         raise generic
-    if user.locked_until and aware(user.locked_until) > utcnow():
+    # Lockout is disabled when MDM_MAX_FAILED_LOGINS <= 0.
+    lockout_on = settings.MAX_FAILED_LOGINS > 0
+    if lockout_on and user.locked_until and aware(user.locked_until) > utcnow():
         raise HTTPException(423, "Account temporarily locked after too many failed attempts. Try again later.")
     if not verify_password(body.password, user.password_hash):
         user.failed_logins += 1
-        if user.failed_logins >= settings.MAX_FAILED_LOGINS:
+        if lockout_on and user.failed_logins >= settings.MAX_FAILED_LOGINS:
             user.locked_until = utcnow() + timedelta(minutes=settings.LOCKOUT_MINUTES)
             user.failed_logins = 0
             audit(db, request, email, "auth.locked", "admin_user", user.id)
