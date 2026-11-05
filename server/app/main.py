@@ -9,7 +9,7 @@ from sqlalchemy import select
 from .config import BASE_DIR, DATA_DIR, settings
 from .db import Base, SessionLocal, engine
 from .models import AdminUser
-from .routers import agent, auth, dashboard, devices, enrollment, users
+from .routers import agent, auth, dashboard, devices, enrollment, installer, users
 from .security import generate_password, hash_password
 
 log = logging.getLogger("tss-mdm")
@@ -57,7 +57,7 @@ async def security_headers(request: Request, call_next):
     return resp
 
 
-for r in (auth.router, users.router, devices.router, enrollment.router, agent.router, dashboard.router):
+for r in (auth.router, users.router, devices.router, enrollment.router, installer.router, agent.router, dashboard.router):
     app.include_router(r)
 
 

@@ -272,13 +272,27 @@
     const origin = location.origin;
     const ps = `powershell -ExecutionPolicy Bypass -Command "iwr ${origin}/downloads/tss-agent.ps1 -OutFile $env:TEMP\\tss-agent.ps1; & $env:TEMP\\tss-agent.ps1 -Server ${origin} -Token ${t.token} -Install"`;
     const py = `curl -fsSLO ${origin}/downloads/tss_agent.py && sudo python3 tss_agent.py --server ${origin} --token ${t.token} --install`;
-    const m = modal(`<h2>${esc(t.name)}</h2><div style="text-align:center"><img id="qr" alt="Enrollment QR code" width="220" height="220" style="background:#fff;border-radius:8px"></div>
+    const m = modal(`<h2>${esc(t.name)}</h2>
+      <div class="callout" style="margin-bottom:14px"><b>Easiest:</b> download the installer and run it on the device (IT, on a company-owned PC). It enrols and installs the background agent in one double-click.</div>
+      <div class="row" style="margin-bottom:6px"><button class="btn primary" data-dl="windows">⇩ Windows installer</button><button class="btn" data-dl="macos">⇩ macOS installer</button></div>
+      <p class="muted small">Windows: double-click the .bat and approve the admin prompt. macOS: right-click the .command → Open.</p>
+      <details style="margin-top:12px"><summary class="btn sm" style="display:inline-block">Other ways: QR code & manual commands</summary>
+      <div style="text-align:center;margin-top:12px"><img id="qr" alt="Enrollment QR code" width="200" height="200" style="background:#fff;border-radius:8px"></div>
       <p class="muted small" style="text-align:center">Scan on the device to open the enrollment page.</p>
       <label>Enrollment link</label><div class="row" style="flex-wrap:nowrap"><input readonly value="${esc(t.enroll_url)}"><button class="btn sm" data-copy="${esc(t.enroll_url)}">Copy</button></div>
       <h3 style="margin-top:14px">Windows (PowerShell as Administrator)</h3><code class="block mono">${esc(ps)}</code><button class="btn sm" data-copy="${esc(ps)}" style="margin-top:6px">Copy</button>
-      <h3 style="margin-top:14px">macOS / Linux</h3><code class="block mono">${esc(py)}</code><button class="btn sm" data-copy="${esc(py)}" style="margin-top:6px">Copy</button>
+      <h3 style="margin-top:14px">macOS / Linux</h3><code class="block mono">${esc(py)}</code><button class="btn sm" data-copy="${esc(py)}" style="margin-top:6px">Copy</button></details>
       <div class="row" style="margin-top:16px"><button class="btn" data-close>Close</button></div>`);
     $$("[data-copy]", m).forEach((b) => (b.onclick = () => copy(b.dataset.copy)));
+    $$("[data-dl]", m).forEach((b) => (b.onclick = async () => {
+      try {
+        const res = await api(`/api/enrollment/tokens/${t.id}/installer?os=${b.dataset.dl}`, { raw: true });
+        const cd = res.headers.get("Content-Disposition") || "";
+        const fn = (cd.match(/filename="?([^"]+)"?/) || [])[1] || `TSS-MDM-Setup.${b.dataset.dl === "windows" ? "bat" : "command"}`;
+        const a = document.createElement("a"); a.href = URL.createObjectURL(await res.blob()); a.download = fn; a.click();
+        toast("Installer downloaded — run it on the device");
+      } catch (e) { toast(e.message, true); }
+    }));
     const res = await api(`/api/enrollment/tokens/${t.id}/qr`, { raw: true });
     const img = $("#qr", m); if (img) img.src = URL.createObjectURL(await res.blob());
   }

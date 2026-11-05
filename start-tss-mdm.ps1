@@ -38,6 +38,9 @@ try {
     if (-not $py) { throw 'Python install did not complete. Install Python 3.12 from python.org manually, then run this again.' }
   }
   Write-Host "Using Python: $($py -join ' ')"
+  # From here on we run native programs (python/pip/uvicorn) that log to stderr;
+  # PowerShell 5.1 would otherwise treat those log lines as fatal errors. We check exit codes instead.
+  $ErrorActionPreference = 'Continue'
 
   $server = Join-Path $Root 'server'
   $venvPy = Join-Path $server '.venv\Scripts\python.exe'

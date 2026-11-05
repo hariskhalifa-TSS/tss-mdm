@@ -165,6 +165,21 @@ def test_inventory_validation(client, su):
     assert r.status_code == 400
 
 
+def test_installer_download(client, su):
+    t = client.post("/api/enrollment/tokens", headers=su, json={"name": "Head Office"}).json()
+    r = client.get(f"/api/enrollment/tokens/{t['id']}/installer?os=windows", headers=su)
+    assert r.status_code == 200
+    assert "TSS-MDM-Setup-Head-Office.bat" in r.headers["content-disposition"]
+    assert t["token"] in r.text and "RunAs" in r.text and "\r\n" in r.text  # token baked in, self-elevating, CRLF
+    assert "downloads/tss-agent.ps1" in r.text
+    mac = client.get(f"/api/enrollment/tokens/{t['id']}/installer?os=macos", headers=su)
+    assert mac.status_code == 200 and t["token"] in mac.text and ".command" in mac.headers["content-disposition"]
+    # viewer can't download; bad os rejected; revoked token rejected
+    assert client.get(f"/api/enrollment/tokens/{t['id']}/installer?os=beos", headers=su).status_code == 400
+    client.post(f"/api/enrollment/tokens/{t['id']}/revoke", headers=su)
+    assert client.get(f"/api/enrollment/tokens/{t['id']}/installer", headers=su).status_code == 400
+
+
 def test_audit_log_records_actions(client, su):
     actions = {a["action"] for a in client.get("/api/audit?page_size=500", headers=su).json()["items"]}
     for a in ("auth.login", "auth.password_changed", "user.created", "device.enrolled", "device.retired",
