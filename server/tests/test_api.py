@@ -165,6 +165,26 @@ def test_inventory_validation(client, su):
     assert r.status_code == 400
 
 
+def test_remote_actions(client, su):
+    t = client.post("/api/enrollment/tokens", headers=su, json={"name": "ra"}).json()
+    dev = client.post("/api/agent/enroll", json={"token": t["token"], "platform": "windows",
+                                                 "inventory": {"name": "PC1", "hardware_id": "ra-1"}}).json()
+    did = dev["device_id"]
+    # technician can lock, but not reboot/shutdown (sensitive -> admin)
+    tech = client.post("/api/users", headers=su, json={"email": "tech@tss.test", "name": "T", "role": "technician"}).json()
+    th = login(client, "tech@tss.test", tech["temporary_password"])
+    r = client.post("/api/auth/change-password", headers=th, json={"current_password": tech["temporary_password"], "new_password": NEW_PW})
+    th = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    assert client.post(f"/api/devices/{did}/commands", headers=th, json={"command": "lock"}).status_code == 201
+    assert client.post(f"/api/devices/{did}/commands", headers=th, json={"command": "reboot"}).status_code == 403
+    assert client.post(f"/api/devices/{did}/commands", headers=su, json={"command": "reboot"}).status_code == 201
+    assert client.post(f"/api/devices/{did}/commands", headers=su, json={"command": "shutdown"}).status_code == 201
+    # agent receives them
+    auth = {"Authorization": f"Device {did}:{dev['device_secret']}"}
+    cmds = client.post("/api/agent/checkin", headers=auth, json={}).json()["commands"]
+    assert {c["command"] for c in cmds} == {"lock", "reboot", "shutdown"}
+
+
 def test_installer_download(client, su):
     t = client.post("/api/enrollment/tokens", headers=su, json={"name": "Head Office"}).json()
     r = client.get(f"/api/enrollment/tokens/{t['id']}/installer?os=windows", headers=su)

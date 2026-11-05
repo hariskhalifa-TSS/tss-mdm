@@ -90,6 +90,14 @@ function Invoke-Command1($cmd) {
       shutdown.exe /r /t 120 /c "Your IT team is restarting this PC in 2 minutes."
       return @{ id = $cmd.id; status = 'succeeded'; result = 'reboot scheduled in 120s' }
     }
+    'shutdown' {
+      shutdown.exe /s /t 120 /c "Your IT team is shutting down this PC in 2 minutes."
+      return @{ id = $cmd.id; status = 'succeeded'; result = 'shutdown scheduled in 120s' }
+    }
+    'lock' {
+      rundll32.exe user32.dll,LockWorkStation
+      return @{ id = $cmd.id; status = 'succeeded'; result = 'workstation locked' }
+    }
     default { return @{ id = $cmd.id; status = 'failed'; result = "'$($cmd.command)' not supported by this agent yet" } }
   }
 }

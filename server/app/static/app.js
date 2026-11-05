@@ -179,8 +179,8 @@
   async function deviceDetailPage(id) {
     const d = await api("/api/devices/" + encodeURIComponent(id));
     const actions = [
-      can("technician") && d.status === "active" ? '<button class="btn" id="sync">⟳ Refresh inventory</button><button class="btn" id="msg">✉ Send message</button><button class="btn" id="edit">✎ Edit</button>' : "",
-      can("admin") && d.status === "active" ? '<button class="btn danger" id="retire">Retire</button>' : "",
+      can("technician") && d.status === "active" ? '<button class="btn" id="sync">⟳ Refresh inventory</button><button class="btn" id="msg">✉ Send message</button><button class="btn" id="lock">🔒 Lock</button><button class="btn" id="edit">✎ Edit</button>' : "",
+      can("admin") && d.status === "active" ? '<button class="btn" id="reboot">↻ Reboot</button><button class="btn" id="shutdown">⏻ Shut down</button><button class="btn danger" id="retire">Retire</button>' : "",
       can("admin") ? '<button class="btn danger" id="del">Delete</button>' : "",
     ].join("");
     const page = shell("devices", d.name, actions);
@@ -211,6 +211,9 @@
     if ($("#appq")) $("#appq").oninput = (e) => { const q = e.target.value.toLowerCase(); $$("#apps tr").forEach((tr) => (tr.style.display = tr.textContent.toLowerCase().includes(q) ? "" : "none")); };
     const send = async (command, payload = {}) => { await api(`/api/devices/${d.id}/commands`, { method: "POST", body: { command, payload } }); toast("Queued — the device picks it up at next check-in"); deviceDetailPage(id); };
     if ($("#sync")) $("#sync").onclick = () => send("refresh_inventory");
+    if ($("#lock")) $("#lock").onclick = () => confirmBox(`Lock ${d.name}?`, "The device's screen locks at its next check-in; the user must sign in again.", "Lock", () => send("lock"));
+    if ($("#reboot")) $("#reboot").onclick = () => confirmBox(`Reboot ${d.name}?`, "The device restarts (with a 2-minute warning to the user) at its next check-in.", "Reboot", () => send("reboot"));
+    if ($("#shutdown")) $("#shutdown").onclick = () => confirmBox(`Shut down ${d.name}?`, "The device powers off (with a 2-minute warning to the user) at its next check-in. You'll need physical access to turn it back on.", "Shut down", () => send("shutdown"));
     if ($("#msg")) $("#msg").onclick = () => {
       const m = modal(`<h2>Send message to ${esc(d.name)}</h2><form id="mf"><div class="field"><label>Title</label><input name="title" value="Message from IT" required></div><div class="field"><label>Message</label><textarea name="body" rows="3" required></textarea></div><div class="row"><button class="btn primary">Send</button><button type="button" class="btn" data-close>Cancel</button></div></form>`);
       $("#mf", m).onsubmit = async (e) => { e.preventDefault(); closeModal(); await send("send_message", formData(e.target)); };
