@@ -18,15 +18,30 @@ DOWNLOADS = {"tss-agent.ps1": "windows/tss-agent.ps1", "tss_agent.py": "python/t
 
 
 def bootstrap_super_admin():
-    """Create the first super admin if none exists."""
+    """Create the first super admin if none exists.
+
+    If MDM_SUPERADMIN_PASSWORD is set, it is also used to (re)set the password of the
+    configured super-admin account as long as that account has NOT completed first login yet
+    (must_change_password still True). This makes recovery on hosts like Railway simple:
+    set the variable, redeploy, log in, change it. Once you've set your own password at first
+    login, the env var no longer touches the account.
+    """
     with SessionLocal() as db:
-        if db.scalar(select(AdminUser).where(AdminUser.role == "super_admin")):
+        existing = db.scalar(select(AdminUser).where(AdminUser.role == "super_admin"))
+        env_pw = settings.SUPERADMIN_PASSWORD
+        if existing:
+            if env_pw and existing.email == settings.SUPERADMIN_EMAIL.lower() and existing.must_change_password:
+                existing.password_hash = hash_password(env_pw)
+                existing.failed_logins, existing.locked_until = 0, None
+                existing.token_version += 1
+                db.commit()
+                log.warning("Super admin password reset from MDM_SUPERADMIN_PASSWORD for %s", existing.email)
             return
-        pw = settings.SUPERADMIN_PASSWORD or generate_password()
+        pw = env_pw or generate_password()
         db.add(AdminUser(email=settings.SUPERADMIN_EMAIL.lower(), name=settings.SUPERADMIN_NAME, role="super_admin",
                          password_hash=hash_password(pw), must_change_password=True))
         db.commit()
-        if not settings.SUPERADMIN_PASSWORD:
+        if not env_pw:
             f = DATA_DIR / "initial_superadmin.txt"
             f.write_text(f"email: {settings.SUPERADMIN_EMAIL}\npassword: {pw}\n(delete this file after first login)\n")
             f.chmod(0o600)
@@ -54,6 +69,10 @@ async def security_headers(request: Request, call_next):
         resp.headers.setdefault("Content-Security-Policy",
                                 "default-src 'self'; img-src 'self' data: blob:;"
                                 "style-src 'self' 'unsafe-inline'; script-src 'self'")
+    # Always serve the console's HTML/CSS/JS fresh so UI updates show up without a hard refresh.
+    p = request.url.path
+    if p == "/" or p.startswith("/static"):
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return resp
 
 
