@@ -185,6 +185,37 @@ def test_remote_actions(client, su):
     assert {c["command"] for c in cmds} == {"lock", "reboot", "shutdown"}
 
 
+def test_run_script(client, su):
+    t = client.post("/api/enrollment/tokens", headers=su, json={"name": "rs"}).json()
+    dev = client.post("/api/agent/enroll", json={"token": t["token"], "platform": "windows",
+                                                 "inventory": {"name": "PC2", "hardware_id": "rs-1"}}).json()
+    did = dev["device_id"]
+    # empty script rejected; technician can't run scripts
+    assert client.post(f"/api/devices/{did}/commands", headers=su, json={"command": "run_script", "payload": {"script": "  "}}).status_code == 400
+    tech = client.post("/api/users", headers=su, json={"email": "t2@tss.test", "name": "T2", "role": "technician"}).json()
+    th = login(client, "t2@tss.test", tech["temporary_password"])
+    r = client.post("/api/auth/change-password", headers=th, json={"current_password": tech["temporary_password"], "new_password": NEW_PW})
+    th = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    assert client.post(f"/api/devices/{did}/commands", headers=th, json={"command": "run_script", "payload": {"script": "echo hi"}}).status_code == 403
+    # admin queues it; agent receives it with payload; result round-trips
+    c = client.post(f"/api/devices/{did}/commands", headers=su, json={"command": "run_script", "payload": {"script": "Get-Date", "shell": "powershell"}}).json()
+    auth = {"Authorization": f"Device {did}:{dev['device_secret']}"}
+    got = client.post("/api/agent/checkin", headers=auth, json={}).json()["commands"][0]
+    assert got["command"] == "run_script" and got["payload"]["script"] == "Get-Date"
+    client.post("/api/agent/checkin", headers=auth, json={"command_results": [{"id": c["id"], "status": "succeeded", "result": "2026-01-01"}]})
+    d = client.get(f"/api/devices/{did}", headers=su).json()
+    assert d["commands"][0]["status"] == "succeeded" and "2026" in d["commands"][0]["result"]
+
+
+def test_checkin_advertises_agent_version(client, su):
+    t = client.post("/api/enrollment/tokens", headers=su, json={"name": "av"}).json()
+    dev = client.post("/api/agent/enroll", json={"token": t["token"], "platform": "linux",
+                                                 "inventory": {"name": "L", "hardware_id": "av-1"}}).json()
+    auth = {"Authorization": f"Device {dev['device_id']}:{dev['device_secret']}"}
+    r = client.post("/api/agent/checkin", headers=auth, json={}).json()
+    assert r["latest_agent_version"] and r["checkin_interval_seconds"] == 60
+
+
 def test_installer_download(client, su):
     t = client.post("/api/enrollment/tokens", headers=su, json={"name": "Head Office"}).json()
     r = client.get(f"/api/enrollment/tokens/{t['id']}/installer?os=windows", headers=su)

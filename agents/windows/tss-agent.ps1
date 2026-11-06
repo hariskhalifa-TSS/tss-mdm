@@ -17,7 +17,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version  = '0.1.0'
+$Version  = '0.2.0'
 $ConfDir  = Join-Path $env:ProgramData 'TSSMDM'
 $ConfFile = Join-Path $ConfDir 'agent.json'
 $TaskName = 'TSS MDM Agent'
@@ -98,17 +98,45 @@ function Invoke-Command1($cmd) {
       rundll32.exe user32.dll,LockWorkStation
       return @{ id = $cmd.id; status = 'succeeded'; result = 'workstation locked' }
     }
+    'run_script' {
+      $code = [string]$cmd.payload.script
+      $shell = [string]$cmd.payload.shell
+      try {
+        if ($shell -eq 'cmd') { $out = cmd.exe /c $code 2>&1 | Out-String }
+        else { $out = powershell -NoProfile -ExecutionPolicy Bypass -Command $code 2>&1 | Out-String }
+        $ok = ($LASTEXITCODE -eq 0 -or $null -eq $LASTEXITCODE)
+        if (-not $out) { $out = "(no output, exit code $LASTEXITCODE)" }
+        if ($out.Length -gt 3900) { $out = $out.Substring(0, 3900) + "`n...(truncated)" }
+        return @{ id = $cmd.id; status = $(if ($ok) { 'succeeded' } else { 'failed' }); result = $out }
+      } catch {
+        return @{ id = $cmd.id; status = 'failed'; result = ("ERROR: " + $_) }
+      }
+    }
     default { return @{ id = $cmd.id; status = 'failed'; result = "'$($cmd.command)' not supported by this agent yet" } }
   }
 }
 
+function Update-AgentIfNeeded($Conf, $Latest) {
+  if (-not $Latest) { return }
+  try { if ([version]$Latest -le [version]$Version) { return } } catch { return }
+  $dest = Join-Path $ConfDir 'tss-agent.ps1'
+  try {
+    Invoke-WebRequest "$($Conf.server)/downloads/tss-agent.ps1" -OutFile "$dest.new" -UseBasicParsing
+    Move-Item "$dest.new" $dest -Force
+    Write-Host "Updated agent $Version -> $Latest (new version runs at next check-in)"
+  } catch { Write-Warning "Agent self-update failed: $_" }
+}
+
 function Invoke-Checkin($Conf) {
   $results = @()
+  $latest = $null
   for ($i = 0; $i -lt 2; $i++) {
     $r = Invoke-Mdm '/api/agent/checkin' @{ inventory = (Get-Inventory); command_results = $results } $Conf
+    $latest = $r.latest_agent_version
     $results = @($r.commands | ForEach-Object { Invoke-Command1 $_ })
     if ($results.Count -eq 0) { break }
   }
+  Update-AgentIfNeeded $Conf $latest
 }
 
 if ($Uninstall) {
@@ -128,7 +156,7 @@ if ($Token) {
     $dest = Join-Path $ConfDir 'tss-agent.ps1'
     if ($PSCommandPath -and ($PSCommandPath -ne $dest)) { Copy-Item $PSCommandPath $dest -Force }
     $action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$dest`" -Once"
-    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
+    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1)
     $boot    = New-ScheduledTaskTrigger -AtStartup
     Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger, $boot -User 'SYSTEM' -RunLevel Highest -Force | Out-Null
     Write-Host "Installed scheduled task '$TaskName' (check-in every 5 minutes)." -ForegroundColor Green

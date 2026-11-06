@@ -130,4 +130,5 @@ def checkin(body: CheckinIn, request: Request, db: Session = Depends(get_db),
         c.status = "sent"
     db.commit()
     return {"commands": [{"id": c.id, "command": c.command, "payload": c.payload} for c in pending],
-            "checkin_interval_seconds": settings.CHECKIN_INTERVAL_SECONDS}
+            "checkin_interval_seconds": settings.CHECKIN_INTERVAL_SECONDS,
+            "latest_agent_version": settings.AGENT_VERSION}

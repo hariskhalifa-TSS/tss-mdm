@@ -180,7 +180,7 @@
     const d = await api("/api/devices/" + encodeURIComponent(id));
     const actions = [
       can("technician") && d.status === "active" ? '<button class="btn" id="sync">⟳ Refresh inventory</button><button class="btn" id="msg">✉ Send message</button><button class="btn" id="lock">🔒 Lock</button><button class="btn" id="edit">✎ Edit</button>' : "",
-      can("admin") && d.status === "active" ? '<button class="btn" id="reboot">↻ Reboot</button><button class="btn" id="shutdown">⏻ Shut down</button><button class="btn danger" id="retire">Retire</button>' : "",
+      can("admin") && d.status === "active" ? '<button class="btn" id="script">⌨ Run script</button><button class="btn" id="reboot">↻ Reboot</button><button class="btn" id="shutdown">⏻ Shut down</button><button class="btn danger" id="retire">Retire</button>' : "",
       can("admin") ? '<button class="btn danger" id="del">Delete</button>' : "",
     ].join("");
     const page = shell("devices", d.name, actions);
@@ -214,6 +214,21 @@
     if ($("#lock")) $("#lock").onclick = () => confirmBox(`Lock ${d.name}?`, "The device's screen locks at its next check-in; the user must sign in again.", "Lock", () => send("lock"));
     if ($("#reboot")) $("#reboot").onclick = () => confirmBox(`Reboot ${d.name}?`, "The device restarts (with a 2-minute warning to the user) at its next check-in.", "Reboot", () => send("reboot"));
     if ($("#shutdown")) $("#shutdown").onclick = () => confirmBox(`Shut down ${d.name}?`, "The device powers off (with a 2-minute warning to the user) at its next check-in. You'll need physical access to turn it back on.", "Shut down", () => send("shutdown"));
+    if ($("#script")) $("#script").onclick = () => {
+      const win = d.platform === "windows";
+      const m = modal(`<h2>Run script on ${esc(d.name)}</h2>
+        <p class="muted small">Runs on the device at its next check-in and returns the output to the Commands tab. Use with care — this runs with system privileges.</p>
+        <form id="sf">${win ? `<div class="field"><label>Shell</label><select name="shell"><option value="powershell">PowerShell</option><option value="cmd">Command Prompt (cmd)</option></select></div>` : ""}
+        <div class="field"><label>${win ? "Script / command" : "Shell command (bash)"}</label><textarea name="script" rows="7" class="mono" placeholder="${win ? "Get-Service | Where-Object Status -eq 'Running'" : "uptime; df -h"}" required></textarea></div>
+        <div class="error" id="serr"></div><div class="row"><button class="btn primary">Run</button><button type="button" class="btn" data-close>Cancel</button></div></form>`);
+      $("#sf", m).onsubmit = async (e) => {
+        e.preventDefault(); const f = formData(e.target);
+        if (!f.script.trim()) { $("#serr").textContent = "Enter a command"; return; }
+        closeModal();
+        await send("run_script", { script: f.script, shell: f.shell || "powershell" });
+        toast("Queued — output appears in the Commands tab after the device runs it");
+      };
+    };
     if ($("#msg")) $("#msg").onclick = () => {
       const m = modal(`<h2>Send message to ${esc(d.name)}</h2><form id="mf"><div class="field"><label>Title</label><input name="title" value="Message from IT" required></div><div class="field"><label>Message</label><textarea name="body" rows="3" required></textarea></div><div class="row"><button class="btn primary">Send</button><button type="button" class="btn" data-close>Cancel</button></div></form>`);
       $("#mf", m).onsubmit = async (e) => { e.preventDefault(); closeModal(); await send("send_message", formData(e.target)); };

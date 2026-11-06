@@ -17,9 +17,9 @@ from ..serializers import device_out, group_out, iso
 router = APIRouter(prefix="/api", tags=["devices"])
 
 # Commands the queue accepts today. Agents report "unsupported" for ones they can't run.
-ALLOWED_COMMANDS = {"refresh_inventory", "send_message", "lock", "reboot", "shutdown"}
-# Destructive actions that require admin role (not just technician).
-SENSITIVE_COMMANDS = {"reboot", "shutdown"}
+ALLOWED_COMMANDS = {"refresh_inventory", "send_message", "lock", "reboot", "shutdown", "run_script"}
+# Powerful/destructive actions that require admin role (not just technician).
+SENSITIVE_COMMANDS = {"reboot", "shutdown", "run_script"}
 
 
 class DeviceUpdate(BaseModel):
@@ -136,6 +136,8 @@ def queue_command(device_id: str, body: CommandIn, request: Request, db: Session
         raise HTTPException(400, f"Command must be one of {sorted(ALLOWED_COMMANDS)}")
     if body.command in SENSITIVE_COMMANDS and ROLES.index(me.role) < ROLES.index("admin"):
         raise HTTPException(403, f"'{body.command}' requires admin role")
+    if body.command == "run_script" and not str(body.payload.get("script", "")).strip():
+        raise HTTPException(400, "run_script requires a non-empty 'script'")
     c = DeviceCommand(device_id=d.id, command=body.command, payload=body.payload, created_by=me.email)
     db.add(c)
     db.flush()

@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 SYSTEM = platform.system()  # Darwin | Linux | Windows
 if SYSTEM == "Windows":
     CONF_DIR = Path(os.environ.get("ProgramData", "C:/ProgramData")) / "TSSMDM"
@@ -181,13 +181,60 @@ def run_command(cmd: dict) -> dict:
             subprocess.run(["notify-send", title, body])
         print(f"[message] {title}: {body}")
         return {"id": cmd["id"], "status": "succeeded", "result": "displayed"}
+    if name == "reboot":
+        subprocess.Popen(["sh", "-c", "shutdown -r +2 'IT is restarting this device in 2 minutes.' 2>/dev/null || sudo shutdown -r +2"])
+        return {"id": cmd["id"], "status": "succeeded", "result": "reboot scheduled in 2 min"}
+    if name == "shutdown":
+        subprocess.Popen(["sh", "-c", "shutdown -h +2 'IT is shutting down this device in 2 minutes.' 2>/dev/null || sudo shutdown -h +2"])
+        return {"id": cmd["id"], "status": "succeeded", "result": "shutdown scheduled in 2 min"}
+    if name == "lock":
+        cmds = ["loginctl lock-sessions", "gnome-screensaver-command -l",
+                "pmset displaysleepnow" if SYSTEM == "Darwin" else "xdg-screensaver lock"]
+        for c in cmds:
+            if subprocess.run(["sh", "-c", c], capture_output=True).returncode == 0:
+                return {"id": cmd["id"], "status": "succeeded", "result": "locked"}
+        return {"id": cmd["id"], "status": "failed", "result": "no lock method available"}
+    if name == "run_script":
+        code = str(cmd.get("payload", {}).get("script", ""))
+        try:
+            r = subprocess.run(["bash", "-c", code], capture_output=True, text=True, timeout=120)
+            out = (r.stdout + r.stderr)[:3900] or f"(no output, exit {r.returncode})"
+            return {"id": cmd["id"], "status": "succeeded" if r.returncode == 0 else "failed", "result": out}
+        except Exception as e:
+            return {"id": cmd["id"], "status": "failed", "result": f"ERROR: {e}"}
     return {"id": cmd["id"], "status": "failed", "result": f"'{name}' not supported by this agent yet"}
+
+
+def _ver(s: str) -> tuple:
+    try:
+        return tuple(int(x) for x in str(s).split("."))
+    except Exception:
+        return (0,)
+
+
+def maybe_self_update(conf: dict, latest: str | None):
+    """Download the newer agent, replace the installed copy, and relaunch so it takes effect."""
+    if not latest or _ver(latest) <= _ver(VERSION):
+        return
+    target = CONF_DIR / "tss_agent.py"
+    if not target.exists():  # only self-update an installed agent, not an ad-hoc run
+        return
+    try:
+        import urllib.request
+        tmp = str(target) + ".new"
+        urllib.request.urlretrieve(conf["server"].rstrip("/") + "/downloads/tss_agent.py", tmp)
+        os.replace(tmp, target)
+        print(f"Updated agent {VERSION} -> {latest}; relaunching")
+        os.execv(sys.executable, [sys.executable, str(target)])  # service restarts with new code
+    except Exception as e:
+        print(f"self-update failed: {e}", file=sys.stderr)
 
 
 def checkin(conf: dict, results: list) -> list:
     auth = f"Device {conf['device_id']}:{conf['device_secret']}"
     r = call(conf["server"], "/api/agent/checkin", {"inventory": collect(), "command_results": results}, auth)
     conf["interval"] = r.get("checkin_interval_seconds", conf.get("interval", 300))
+    conf["_latest"] = r.get("latest_agent_version")
     return [run_command(c) for c in r.get("commands", [])]
 
 
@@ -249,6 +296,7 @@ def main():
             print(f"check-in failed: {e}", file=sys.stderr)
         if a.once:
             return
+        maybe_self_update(conf, conf.get("_latest"))  # relaunches if a newer agent is available
         time.sleep(conf.get("interval", 300))
 
 
