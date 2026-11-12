@@ -1,0 +1,47 @@
+name: Build Windows agent
+on:
+  push:
+    paths:
+      - 'agents/rust/src/**'
+      - 'agents/rust/Cargo.toml'
+      - '.github/workflows/build-windows-agent.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-windows-agent
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build release
+        run: cargo build --release --manifest-path agents/rust/Cargo.toml
+      - name: Stage binary
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path agents/rust/dist | Out-Null
+          Copy-Item agents/rust/target/release/tss-agent.exe agents/rust/dist/tss-agent.exe -Force
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tss-agent-windows
+          path: agents/rust/dist/tss-agent.exe
+      - name: Commit built exe so the server can serve it
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f agents/rust/dist/tss-agent.exe
+          $changed = (git status --porcelain agents/rust/dist/tss-agent.exe)
+          if ($changed) {
+            git commit -m "build: windows agent exe [skip ci]"
+            git push
+          } else {
+            Write-Host "No change in built exe."
+          }
