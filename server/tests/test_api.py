@@ -207,6 +207,23 @@ def test_run_script(client, su):
     assert d["commands"][0]["status"] == "succeeded" and "2026" in d["commands"][0]["result"]
 
 
+def test_longpoll_checkin(client, su):
+    t = client.post("/api/enrollment/tokens", headers=su, json={"name": "lp"}).json()
+    dev = client.post("/api/agent/enroll", json={"token": t["token"], "platform": "linux",
+                                                 "inventory": {"name": "LP", "hardware_id": "lp-1"}}).json()
+    auth = {"Authorization": f"Device {dev['device_id']}:{dev['device_secret']}"}
+    # already-pending command returns immediately even with wait set
+    client.post(f"/api/devices/{dev['device_id']}/commands", headers=su, json={"command": "lock"})
+    import time as _t
+    start = _t.monotonic()
+    r = client.post("/api/agent/checkin?wait=5", headers=auth, json={}).json()
+    assert r["commands"][0]["command"] == "lock" and _t.monotonic() - start < 2
+    # no commands: long-poll holds ~wait seconds then returns empty
+    start = _t.monotonic()
+    r = client.post("/api/agent/checkin?wait=2", headers=auth, json={}).json()
+    assert r["commands"] == [] and _t.monotonic() - start >= 1.5
+
+
 def test_checkin_advertises_agent_version(client, su):
     t = client.post("/api/enrollment/tokens", headers=su, json={"name": "av"}).json()
     dev = client.post("/api/agent/enroll", json={"token": t["token"], "platform": "linux",

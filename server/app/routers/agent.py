@@ -1,5 +1,7 @@
 """Endpoints called by device agents (not by admins)."""
-from fastapi import APIRouter, Depends, HTTPException, Request
+import time
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -115,7 +117,8 @@ def enroll(body: EnrollIn, request: Request, db: Session = Depends(get_db)):
 
 @router.post("/checkin")
 def checkin(body: CheckinIn, request: Request, db: Session = Depends(get_db),
-            device: Device = Depends(get_current_device)):
+            device: Device = Depends(get_current_device),
+            wait: int = Query(0, ge=0, le=60)):
     if body.inventory:
         _apply_inventory(device, body.inventory, request)
     device.last_seen_at = utcnow()
@@ -124,8 +127,27 @@ def checkin(body: CheckinIn, request: Request, db: Session = Depends(get_db),
         if cmd and cmd.device_id == device.id and r.get("status") in ("succeeded", "failed"):
             cmd.status = r["status"]
             cmd.result = str(r.get("result", ""))[:4000]
-    pending = list(db.scalars(select(DeviceCommand).where(DeviceCommand.device_id == device.id,
-                                                          DeviceCommand.status == "pending")))
+    db.commit()
+
+    device_id = device.id
+
+    def fetch_pending():
+        return list(db.scalars(select(DeviceCommand).where(
+            DeviceCommand.device_id == device_id, DeviceCommand.status == "pending")))
+
+    # Long-poll: hold the request open until a command appears or `wait` seconds pass.
+    # This lets agents idle with a single open connection (near-zero CPU) and still get
+    # commands within ~1s, instead of busy-polling.
+    pending = fetch_pending()
+    if not pending and wait > 0:
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            db.rollback()  # end the transaction so the next read sees newly-committed commands
+            time.sleep(1)
+            pending = fetch_pending()
+            if pending:
+                break
+
     for c in pending:
         c.status = "sent"
     db.commit()

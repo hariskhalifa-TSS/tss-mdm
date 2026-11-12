@@ -43,11 +43,24 @@ try {
   }
 
   Write-Host '  Connected. Downloading agent and enrolling...'
-  # Run the agent IN-MEMORY as a script block (not a .ps1 file), so Windows "running scripts
-  # is disabled" / execution-policy restrictions never apply.
-  $content = (Invoke-WebRequest -UseBasicParsing "$Server/downloads/tss-agent.ps1").Content
-  $sb = [scriptblock]::Create($content)
-  & $sb -Server $Server -Token $Token -Install
+  $usedExe = $false
+  try {
+    # Preferred: tiny native Rust agent (lowest resource use). May not exist until CI has built it.
+    $exe = Join-Path $env:TEMP 'tss-agent.exe'
+    Invoke-WebRequest -UseBasicParsing "$Server/downloads/tss-agent.exe" -OutFile $exe
+    if ((Get-Item $exe).Length -lt 100000) { throw 'exe too small / not a real build' }
+    & $exe --server $Server --token $Token --install
+    if ($LASTEXITCODE -ne 0) { throw "native agent install returned $LASTEXITCODE" }
+    $usedExe = $true
+  } catch {
+    Write-Host '  Native agent not available yet; using the built-in agent.' -ForegroundColor Yellow
+  }
+  if (-not $usedExe) {
+    # Fallback: PowerShell agent, run IN-MEMORY so execution-policy / script-blocking never applies.
+    $content = (Invoke-WebRequest -UseBasicParsing "$Server/downloads/tss-agent.ps1").Content
+    $sb = [scriptblock]::Create($content)
+    & $sb -Server $Server -Token $Token -Install
+  }
 
   Write-Host ''
   Write-Host '  Done. This device is enrolled and will appear under Devices.' -ForegroundColor Green

@@ -7,3 +7,4 @@ __pycache__/
 server/.venv/
 start-log.txt
 *.db
+agents/rust/target/

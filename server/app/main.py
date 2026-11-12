@@ -14,7 +14,8 @@ from .security import generate_password, hash_password
 
 log = logging.getLogger("tss-mdm")
 STATIC = BASE_DIR / "app" / "static"
-DOWNLOADS = {"tss-agent.ps1": "windows/tss-agent.ps1", "tss_agent.py": "python/tss_agent.py"}
+DOWNLOADS = {"tss-agent.ps1": "windows/tss-agent.ps1", "tss_agent.py": "python/tss_agent.py",
+             "tss-agent.exe": "rust/dist/tss-agent.exe"}
 
 
 def bootstrap_super_admin():
@@ -26,16 +27,26 @@ def bootstrap_super_admin():
     set the variable, redeploy, log in, change it. Once you've set your own password at first
     login, the env var no longer touches the account.
     """
+    import os
+    force_reset = os.getenv("MDM_SUPERADMIN_RESET", "").lower() in ("1", "true", "yes")
     with SessionLocal() as db:
-        existing = db.scalar(select(AdminUser).where(AdminUser.role == "super_admin"))
+        existing = db.scalar(select(AdminUser).where(AdminUser.role == "super_admin")
+                             .order_by(AdminUser.id))
         env_pw = settings.SUPERADMIN_PASSWORD
         if existing:
-            if env_pw and existing.email == settings.SUPERADMIN_EMAIL.lower() and existing.must_change_password:
+            # Gentle: before first login, keep the account's password in sync with the env var.
+            # Break-glass: MDM_SUPERADMIN_RESET=true forces email+password reset even after first login.
+            if env_pw and (force_reset or (existing.email == settings.SUPERADMIN_EMAIL.lower()
+                                           and existing.must_change_password)):
+                existing.email = settings.SUPERADMIN_EMAIL.lower()
+                existing.name = settings.SUPERADMIN_NAME or existing.name
                 existing.password_hash = hash_password(env_pw)
+                existing.must_change_password = True
+                existing.is_active = True
                 existing.failed_logins, existing.locked_until = 0, None
                 existing.token_version += 1
                 db.commit()
-                log.warning("Super admin password reset from MDM_SUPERADMIN_PASSWORD for %s", existing.email)
+                log.warning("Super admin reset from env for %s (force=%s)", existing.email, force_reset)
             return
         pw = env_pw or generate_password()
         db.add(AdminUser(email=settings.SUPERADMIN_EMAIL.lower(), name=settings.SUPERADMIN_NAME, role="super_admin",
@@ -90,7 +101,8 @@ def download_agent(name: str):
     rel = DOWNLOADS.get(name)
     if not rel or not (settings.AGENTS_DIR / rel).exists():
         raise HTTPException(404, "Not found")
-    return FileResponse(settings.AGENTS_DIR / rel, filename=name, media_type="text/plain")
+    media = "application/octet-stream" if name.endswith(".exe") else "text/plain"
+    return FileResponse(settings.AGENTS_DIR / rel, filename=name, media_type=media)
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
