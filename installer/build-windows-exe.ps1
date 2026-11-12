@@ -40,25 +40,35 @@ if (-not (Get-Module -ListAvailable -Name ps2exe)) {
 }
 Import-Module ps2exe
 
+# Bake server/token defaults into the script itself (ps2exe has no reliable "arguments" option).
+$compileFrom = $Ps1Path
+if ($Server -or $Token) {
+  $src = Get-Content $Ps1Path -Raw
+  $s = ($Server -replace "'", "''")
+  $t = ($Token  -replace "'", "''")
+  $newParam = "param([string]`$Server = '$s', [string]`$Token = '$t')"
+  $src2 = $src.Replace('param([string]$Server, [string]$Token)', $newParam)
+  if ($src2 -eq $src) { throw "Could not find the param line to bake values into $Ps1Path" }
+  $compileFrom = Join-Path $env:TEMP 'tss-mdm-installer.baked.ps1'
+  Set-Content -Path $compileFrom -Value $src2 -Encoding UTF8
+  Write-Host "Baked server URL into the installer."
+}
+
 $opt = @{
-  inputFile    = $Ps1Path
+  inputFile    = $compileFrom
   outputFile   = $OutPath
   noConsole    = $false
   requireAdmin = $true
   title        = 'TSS MDM Installer'
   company      = 'The Souled Store'
   product      = 'TSS MDM Agent'
-  version      = '0.2.0'
+  version      = '0.3.0'
 }
 if ($IconPath -and (Test-Path $IconPath)) { $opt.iconFile = $IconPath }
-# Bake server/token into the exe so it runs with no prompts
-$extra = @()
-if ($Server) { $extra += "-Server `"$Server`"" }
-if ($Token)  { $extra += "-Token `"$Token`"" }
-if ($extra.Count) { $opt.arguments = ($extra -join ' ') }
 
 Write-Host "Building $OutPath ..."
 Invoke-ps2exe @opt
+if ($compileFrom -ne $Ps1Path) { Remove-Item $compileFrom -Force -ErrorAction SilentlyContinue }
 if (-not (Test-Path $OutPath)) { throw 'Build did not produce the .exe.' }
 
 if ($PfxPath) {

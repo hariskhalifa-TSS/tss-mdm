@@ -35,7 +35,7 @@ class Settings:
     PUBLIC_URL = os.getenv("MDM_PUBLIC_URL", "http://localhost:8000").rstrip("/")
     ACCESS_TOKEN_MINUTES = int(os.getenv("MDM_ACCESS_TOKEN_MINUTES", "480"))
     OFFLINE_AFTER_MINUTES = int(os.getenv("MDM_OFFLINE_AFTER_MINUTES", "15"))
-    CHECKIN_INTERVAL_SECONDS = int(os.getenv("MDM_CHECKIN_INTERVAL_SECONDS", "60"))
+    CHECKIN_INTERVAL_SECONDS = int(os.getenv("MDM_CHECKIN_INTERVAL_SECONDS", "10"))
     MAX_FAILED_LOGINS = int(os.getenv("MDM_MAX_FAILED_LOGINS", "0"))  # 0 = lockout disabled
     LOCKOUT_MINUTES = int(os.getenv("MDM_LOCKOUT_MINUTES", "15"))
     SUPERADMIN_EMAIL = os.getenv("MDM_SUPERADMIN_EMAIL", "admin@example.com")
@@ -43,7 +43,7 @@ class Settings:
     SUPERADMIN_PASSWORD = os.getenv("MDM_SUPERADMIN_PASSWORD")  # random if unset
     AGENTS_DIR = Path(os.getenv("MDM_AGENTS_DIR", BASE_DIR.parent / "agents"))
     # Latest agent version the server ships. Bump when agents/ changes so devices self-update.
-    AGENT_VERSION = os.getenv("MDM_AGENT_VERSION", "0.3.0")
+    AGENT_VERSION = os.getenv("MDM_AGENT_VERSION", "0.4.0")
 
 
 settings = Settings()

@@ -213,7 +213,7 @@ def test_checkin_advertises_agent_version(client, su):
                                                  "inventory": {"name": "L", "hardware_id": "av-1"}}).json()
     auth = {"Authorization": f"Device {dev['device_id']}:{dev['device_secret']}"}
     r = client.post("/api/agent/checkin", headers=auth, json={}).json()
-    assert r["latest_agent_version"] and r["checkin_interval_seconds"] == 60
+    assert r["latest_agent_version"] and r["checkin_interval_seconds"] == 10
 
 
 def test_installer_download(client, su):

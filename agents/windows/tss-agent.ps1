@@ -17,7 +17,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version  = '0.3.0'
+$Version  = '0.4.0'
 $ConfDir  = Join-Path $env:ProgramData 'TSSMDM'
 $ConfFile = Join-Path $ConfDir 'agent.json'
 $TaskName = 'TSS MDM Agent'
@@ -127,12 +127,15 @@ function Update-AgentIfNeeded($Conf, $Latest) {
   } catch { Write-Warning "Agent self-update failed: $_" }
 }
 
+$script:Interval = 10
+
 function Invoke-Checkin($Conf) {
   $results = @()
   $latest = $null
   for ($i = 0; $i -lt 2; $i++) {
     $r = Invoke-Mdm '/api/agent/checkin' @{ inventory = (Get-Inventory); command_results = $results } $Conf
     $latest = $r.latest_agent_version
+    if ($r.checkin_interval_seconds) { $script:Interval = [int]$r.checkin_interval_seconds }
     $results = @($r.commands | ForEach-Object { Invoke-Command1 $_ })
     if ($results.Count -eq 0) { break }
   }
@@ -161,14 +164,20 @@ if ($Token) {
     } elseif (-not (Test-Path $dest)) {
       Invoke-WebRequest -UseBasicParsing "$($conf.server)/downloads/tss-agent.ps1" -OutFile $dest
     }
-    # Run the agent IN-MEMORY (script block from file content), so execution-policy / script-blocking
-    # never stops the scheduled task.
-    $inner = "& ([scriptblock]::Create((Get-Content -Raw '$dest'))) -Once"
+    # Run the agent IN-MEMORY and PERSISTENTLY (no -Once): it loops and polls every ~10s, which
+    # Task Scheduler's 1-minute minimum can't do. In-memory run avoids execution-policy blocking.
+    $inner = "& ([scriptblock]::Create((Get-Content -Raw '$dest')))"
     $action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command `"$inner`""
-    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1)
+    $now     = New-ScheduledTaskTrigger -Once -At (Get-Date)
     $boot    = New-ScheduledTaskTrigger -AtStartup
-    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger, $boot -User 'SYSTEM' -RunLevel Highest -Force | Out-Null
-    Write-Host "Installed scheduled task '$TaskName' (checks in every minute)." -ForegroundColor Green
+    # Watchdog: a 5-min repetition relaunches the loop if it ever died; IgnoreNew stops duplicates.
+    $watch   = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
+    $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -AllowStartIfOnBatteries `
+                  -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
+                  -ExecutionTimeLimit ([TimeSpan]::Zero)
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $now, $boot, $watch `
+      -Settings $settings -User 'SYSTEM' -RunLevel Highest -Force | Out-Null
+    Write-Host "Installed scheduled task '$TaskName' (persistent, checks in every ~10s)." -ForegroundColor Green
   }
   return
 }
@@ -182,5 +191,5 @@ do {
     if ($code -in 401, 410) { Write-Warning 'Device retired from MDM; removing agent.'; & $PSCommandPath -Uninstall; return }
     Write-Warning "Check-in failed: $_"
   }
-  if (-not $Once) { Start-Sleep -Seconds 300 }
+  if (-not $Once) { Start-Sleep -Seconds $script:Interval }
 } while (-not $Once)
