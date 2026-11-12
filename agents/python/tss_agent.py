@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 SYSTEM = platform.system()  # Darwin | Linux | Windows
 if SYSTEM == "Windows":
     CONF_DIR = Path(os.environ.get("ProgramData", "C:/ProgramData")) / "TSSMDM"

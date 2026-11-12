@@ -17,7 +17,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version  = '0.2.0'
+$Version  = '0.3.0'
 $ConfDir  = Join-Path $env:ProgramData 'TSSMDM'
 $ConfFile = Join-Path $ConfDir 'agent.json'
 $TaskName = 'TSS MDM Agent'
@@ -154,12 +154,21 @@ if ($Token) {
   Write-Host "Enrolled in TSS MDM. Device ID $($r.device_id)" -ForegroundColor Green
   if ($Install) {
     $dest = Join-Path $ConfDir 'tss-agent.ps1'
-    if ($PSCommandPath -and ($PSCommandPath -ne $dest)) { Copy-Item $PSCommandPath $dest -Force }
-    $action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$dest`" -Once"
+    # Make sure the agent file exists at $dest. When this ran in-memory (from the .exe) there is
+    # no source file, so fetch it from the server instead.
+    if ($PSCommandPath -and (Test-Path $PSCommandPath) -and ($PSCommandPath -ne $dest)) {
+      Copy-Item $PSCommandPath $dest -Force
+    } elseif (-not (Test-Path $dest)) {
+      Invoke-WebRequest -UseBasicParsing "$($conf.server)/downloads/tss-agent.ps1" -OutFile $dest
+    }
+    # Run the agent IN-MEMORY (script block from file content), so execution-policy / script-blocking
+    # never stops the scheduled task.
+    $inner = "& ([scriptblock]::Create((Get-Content -Raw '$dest'))) -Once"
+    $action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command `"$inner`""
     $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1)
     $boot    = New-ScheduledTaskTrigger -AtStartup
     Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger, $boot -User 'SYSTEM' -RunLevel Highest -Force | Out-Null
-    Write-Host "Installed scheduled task '$TaskName' (check-in every 5 minutes)." -ForegroundColor Green
+    Write-Host "Installed scheduled task '$TaskName' (checks in every minute)." -ForegroundColor Green
   }
   return
 }
