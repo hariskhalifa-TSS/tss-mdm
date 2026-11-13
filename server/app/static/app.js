@@ -136,7 +136,7 @@
           <div class="bar"><span>Low storage</span><span class="muted small">&lt; 5 GB free</span><b>${d.alerts.low_storage}</b></div>
           <div class="bar"><span>Unencrypted</span><span class="muted small">disk / storage</span><b>${d.alerts.unencrypted}</b></div></div>
           <p class="muted small">Ownership: ${d.by_ownership.corporate || 0} corporate · ${d.by_ownership.byod || 0} BYOD</p></div></div>
-      ${d.total === 0 ? `<div class="card empty" style="margin-top:16px">No devices yet. ${can("technician") ? '<a href="#/enrollment">Create an enrollment token</a> to add your first device.' : ""}</div>` : ""}`;
+      ${d.total === 0 ? `<div class="card empty" style="margin-top:16px">No devices yet. ${can("technician") ? '<a href="#/enrollment">Create an enrollment key</a> to add your first device.' : ""}</div>` : ""}`;
   }
 
   // ---------- devices ----------
@@ -258,61 +258,53 @@
 
   // ---------- enrollment ----------
   async function enrollmentPage() {
-    const page = shell("enrollment", "Enrollment", '<button class="btn primary" id="new">+ New enrollment token</button>');
+    const page = shell("enrollment", "Enrollment", can("technician") ? '<button class="btn primary" id="new">+ New enrollment key</button>' : "");
     const [tokens, groups] = await Promise.all([api("/api/enrollment/tokens"), api("/api/groups")]);
-    page.innerHTML = `<div class="card" style="margin-bottom:16px"><h2>How enrollment works</h2><p class="muted" style="margin:0">Create a token, then open its QR code or link on the device. Windows, macOS and Linux devices install the TSS agent with one command. Each device gets its own credential and checks in every few minutes with its inventory. Android and Apple native enrollment come in the next phase (see the plan).</p></div>
-      <div class="card">${tokens.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Platform</th><th>Ownership</th><th>Group</th><th>Uses</th><th>Expires</th><th>Status</th><th></th></tr></thead><tbody>
-      ${tokens.map((t) => `<tr><td><b>${esc(t.name)}</b><div class="muted small">by ${esc(t.created_by)}</div></td><td>${t.platform ? PLATFORMS[t.platform] : "Any"}</td><td>${t.ownership === "byod" ? "BYOD" : "Corporate"}</td><td>${esc(t.group_name || "—")}</td>
+    page.innerHTML = `<div class="card" style="margin-bottom:16px"><h2>How enrollment works</h2>
+      <ol class="muted" style="margin:0;padding-left:18px;line-height:1.9">
+        <li>Create an enrollment key here.</li>
+        <li>On the PC, run <b>TSS-MDM-Agent.exe</b> (<a href="/downloads/TSS-MDM-Agent.exe" download>download</a>) and approve the admin prompt.</li>
+        <li>Type the key into the window. That's it &mdash; the device appears in Devices within a few seconds.</li>
+      </ol></div>
+      <div class="card">${tokens.length ? `<div class="table-wrap"><table><thead><tr><th>Key</th><th>Name</th><th>Platform</th><th>Group</th><th>Used</th><th>Expires</th><th>Status</th><th></th></tr></thead><tbody>
+      ${tokens.map((t) => `<tr><td><code class="mono"><b>${esc(t.token)}</b></code></td>
+        <td>${esc(t.name)}<div class="muted small">by ${esc(t.created_by)}</div></td><td>${t.platform ? PLATFORMS[t.platform] : "Any"}</td><td>${esc(t.group_name || "—")}</td>
         <td>${t.uses}${t.max_uses ? " / " + t.max_uses : ""}</td><td>${t.expires_at ? new Date(t.expires_at).toLocaleDateString() : "Never"}</td>
         <td>${t.usable ? '<span class="badge ok">Active</span>' : t.revoked ? '<span class="badge bad">Revoked</span>' : '<span class="badge">Expired / used</span>'}</td>
-        <td class="row"><button class="btn sm" data-show="${t.id}">QR & install</button>${can("admin") && !t.revoked ? `<button class="btn sm danger" data-revoke="${t.id}">Revoke</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : '<div class="empty">No enrollment tokens yet.</div>'}</div>`;
-    $("#new").onclick = () => {
-      const m = modal(`<h2>New enrollment token</h2><form id="tf"><div class="field"><label>Name</label><input name="name" placeholder="e.g. Mumbai warehouse laptops" required></div>
-        <div class="grid g2"><div class="field"><label>Platform</label><select name="platform"><option value="">Any platform</option>${Object.entries(PLATFORMS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></div>
-        <div class="field"><label>Ownership</label><select name="ownership"><option value="corporate">Corporate</option><option value="byod">BYOD</option></select></div></div>
-        <div class="field"><label>Put devices in group</label><select name="group_id"><option value="">No group</option>${groups.map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join("")}</select></div>
-        <div class="field"><label>Assign to user (optional email)</label><input name="assigned_user" type="email"></div>
-        <div class="grid g2"><div class="field"><label>Max devices (blank = unlimited)</label><input name="max_uses" type="number" min="1"></div>
+        <td class="row"><button class="btn sm" data-show="${t.id}">Show</button>${can("admin") && !t.revoked ? `<button class="btn sm danger" data-revoke="${t.id}">Revoke</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : '<div class="empty">No enrollment keys yet.</div>'}</div>`;
+    if ($("#new")) $("#new").onclick = () => {
+      const m = modal(`<h2>New enrollment key</h2><form id="tf"><div class="field"><label>What is this key for?</label><input name="name" placeholder="e.g. Mumbai warehouse laptops" required></div>
+        <div class="grid g2"><div class="field"><label>Put devices in group</label><select name="group_id"><option value="">No group</option>${groups.map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join("")}</select></div>
         <div class="field"><label>Expires in (days)</label><input name="expires_in_days" type="number" min="1" max="365" value="30"></div></div>
-        <div class="error" id="terr"></div><div class="row"><button class="btn primary">Create</button><button type="button" class="btn" data-close>Cancel</button></div></form>`);
+        <details style="margin-bottom:12px"><summary class="muted small" style="cursor:pointer">More options</summary>
+        <div class="grid g2" style="margin-top:10px"><div class="field"><label>Platform</label><select name="platform"><option value="">Any platform</option>${Object.entries(PLATFORMS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></div>
+        <div class="field"><label>Ownership</label><select name="ownership"><option value="corporate">Corporate</option><option value="byod">BYOD</option></select></div></div>
+        <div class="grid g2"><div class="field"><label>Max devices (blank = unlimited)</label><input name="max_uses" type="number" min="1"></div>
+        <div class="field"><label>Assign to user (optional email)</label><input name="assigned_user" type="email"></div></div></details>
+        <div class="error" id="terr"></div><div class="row"><button class="btn primary">Create key</button><button type="button" class="btn" data-close>Cancel</button></div></form>`);
       $("#tf", m).onsubmit = async (e) => {
         e.preventDefault(); const f = formData(e.target);
-        const body = { name: f.name, ownership: f.ownership, platform: f.platform || null, group_id: f.group_id ? +f.group_id : null, assigned_user: f.assigned_user || null, max_uses: f.max_uses ? +f.max_uses : null, expires_in_days: f.expires_in_days ? +f.expires_in_days : null };
+        const body = { name: f.name, ownership: f.ownership || "corporate", platform: f.platform || null, group_id: f.group_id ? +f.group_id : null, assigned_user: f.assigned_user || null, max_uses: f.max_uses ? +f.max_uses : null, expires_in_days: f.expires_in_days ? +f.expires_in_days : null };
         try { const t = await api("/api/enrollment/tokens", { method: "POST", body }); await enrollmentPage(); showToken(t); }
         catch (err) { $("#terr").textContent = err.message; }
       };
     };
     $$("[data-show]").forEach((b) => (b.onclick = () => showToken(tokens.find((t) => t.id === +b.dataset.show))));
-    $$("[data-revoke]").forEach((b) => (b.onclick = () => confirmBox("Revoke this token?", "Devices already enrolled stay managed. New devices can't use this token.", "Revoke", async () => { await api(`/api/enrollment/tokens/${b.dataset.revoke}/revoke`, { method: "POST" }); toast("Token revoked"); enrollmentPage(); })));
+    $$("[data-revoke]").forEach((b) => (b.onclick = () => confirmBox("Revoke this key?", "Devices already enrolled stay managed. New devices can't use this key.", "Revoke", async () => { await api(`/api/enrollment/tokens/${b.dataset.revoke}/revoke`, { method: "POST" }); toast("Key revoked"); enrollmentPage(); })));
   }
 
-  async function showToken(t) {
-    const origin = location.origin;
-    const ps = `powershell -ExecutionPolicy Bypass -Command "iwr ${origin}/downloads/tss-agent.ps1 -OutFile $env:TEMP\\tss-agent.ps1; & $env:TEMP\\tss-agent.ps1 -Server ${origin} -Token ${t.token} -Install"`;
-    const py = `curl -fsSLO ${origin}/downloads/tss_agent.py && sudo python3 tss_agent.py --server ${origin} --token ${t.token} --install`;
+  // The whole hand-off to whoever sets up the PC: one key, one .exe.
+  function showToken(t) {
     const m = modal(`<h2>${esc(t.name)}</h2>
-      <div class="callout" style="margin-bottom:14px"><b>Easiest:</b> download the installer and run it on the device (IT, on a company-owned PC). It enrols and installs the background agent in one double-click.</div>
-      <div class="row" style="margin-bottom:6px"><button class="btn primary" data-dl="windows">⇩ Windows installer</button><button class="btn" data-dl="macos">⇩ macOS installer</button></div>
-      <p class="muted small">Windows: double-click the .bat and approve the admin prompt. macOS: right-click the .command → Open.</p>
-      <details style="margin-top:12px"><summary class="btn sm" style="display:inline-block">Other ways: QR code & manual commands</summary>
-      <div style="text-align:center;margin-top:12px"><img id="qr" alt="Enrollment QR code" width="200" height="200" style="background:#fff;border-radius:8px"></div>
-      <p class="muted small" style="text-align:center">Scan on the device to open the enrollment page.</p>
-      <label>Enrollment link</label><div class="row" style="flex-wrap:nowrap"><input readonly value="${esc(t.enroll_url)}"><button class="btn sm" data-copy="${esc(t.enroll_url)}">Copy</button></div>
-      <h3 style="margin-top:14px">Windows (PowerShell as Administrator)</h3><code class="block mono">${esc(ps)}</code><button class="btn sm" data-copy="${esc(ps)}" style="margin-top:6px">Copy</button>
-      <h3 style="margin-top:14px">macOS / Linux</h3><code class="block mono">${esc(py)}</code><button class="btn sm" data-copy="${esc(py)}" style="margin-top:6px">Copy</button></details>
+      <p class="muted" style="margin-top:0">Give this key to whoever is setting up the device.</p>
+      <div style="text-align:center;margin:18px 0">
+        <div class="mono" style="font-size:30px;font-weight:700;letter-spacing:2px">${esc(t.token)}</div>
+      </div>
+      <div class="row" style="justify-content:center;margin-bottom:18px"><button class="btn" data-copy="${esc(t.token)}">Copy key</button>
+      <a class="btn primary" href="/downloads/TSS-MDM-Agent.exe" download>⇩ Download TSS-MDM-Agent.exe</a></div>
+      <div class="callout"><b>On the device:</b> run <b>TSS-MDM-Agent.exe</b>, approve the Windows admin prompt, type the key, click <b>Enroll</b>. Nothing else to install or configure.</div>
       <div class="row" style="margin-top:16px"><button class="btn" data-close>Close</button></div>`);
     $$("[data-copy]", m).forEach((b) => (b.onclick = () => copy(b.dataset.copy)));
-    $$("[data-dl]", m).forEach((b) => (b.onclick = async () => {
-      try {
-        const res = await api(`/api/enrollment/tokens/${t.id}/installer?os=${b.dataset.dl}`, { raw: true });
-        const cd = res.headers.get("Content-Disposition") || "";
-        const fn = (cd.match(/filename="?([^"]+)"?/) || [])[1] || `TSS-MDM-Setup.${b.dataset.dl === "windows" ? "bat" : "command"}`;
-        const a = document.createElement("a"); a.href = URL.createObjectURL(await res.blob()); a.download = fn; a.click();
-        toast("Installer downloaded — run it on the device");
-      } catch (e) { toast(e.message, true); }
-    }));
-    const res = await api(`/api/enrollment/tokens/${t.id}/qr`, { raw: true });
-    const img = $("#qr", m); if (img) img.src = URL.createObjectURL(await res.blob());
   }
 
   // ---------- groups ----------

@@ -123,3 +123,33 @@ def client_ip(request: Request) -> str:
 def audit(db: Session, request: Request, actor: str, action: str, target_type: str = "", target_id="", **details):
     db.add(AuditLog(actor=actor, action=action, target_type=target_type, target_id=str(target_id),
                     details=details, ip=client_ip(request)))
+
+
+# ---------- enrollment brute-force guard ----------
+# Enrollment keys are short enough to type by hand, so the one thing that must not be
+# possible is guessing them at machine speed. Failed /api/agent/enroll attempts are
+# counted per client IP in a sliding window; successes don't count. In-memory and
+# per-worker, which is all this needs -- it turns 10^12 guesses into geological time.
+ENROLL_FAIL_LIMIT = 10
+ENROLL_FAIL_WINDOW = timedelta(minutes=10)
+_enroll_fails: dict[str, list] = {}
+
+
+def enroll_attempts_exceeded(ip: str) -> bool:
+    cutoff = utcnow() - ENROLL_FAIL_WINDOW
+    recent = [t for t in _enroll_fails.get(ip, []) if t > cutoff]
+    if recent:
+        _enroll_fails[ip] = recent
+    else:
+        _enroll_fails.pop(ip, None)
+    return len(recent) >= ENROLL_FAIL_LIMIT
+
+
+def record_enroll_failure(ip: str) -> None:
+    if len(_enroll_fails) > 10_000:  # bound memory against spoofed-IP floods
+        _enroll_fails.clear()
+    _enroll_fails.setdefault(ip, []).append(utcnow())
+
+
+def clear_enroll_failures(ip: str) -> None:
+    _enroll_fails.pop(ip, None)

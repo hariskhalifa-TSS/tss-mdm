@@ -9,7 +9,7 @@ Scope: internal use only (one organisation). Platforms: Android, Windows, iOS/iP
 |---|---|---|
 | Admin console, roles (Super Admin / Admin / Technician / Viewer) | Technician roles with scoped access | **Done (Phase 1)** |
 | Audit log of admin and device actions | Yes | **Done (Phase 1)** |
-| Device enrollment (token, QR, email invite, bulk CSV) | Many methods per OS | **Token + QR + link done**; invites/CSV in Phase 2 |
+| Device enrollment (key, QR, email invite, bulk CSV) | Many methods per OS | **Enrollment key + one-click .exe done**; invites/CSV in Phase 2 |
 | Device inventory (hardware, OS, battery, storage, network, apps, location) | Yes | **Done** (agent-reported) |
 | Device groups | Yes | **Done** |
 | Remote actions (lock, wipe, reboot, message, locate) | Yes | Queue + message/reboot (Windows) done; full set in Phase 2 |
@@ -52,7 +52,7 @@ Phase 1 covers inventory and enrollment on every OS through our agent, and on Ap
 ## 4. Phases
 
 **Phase 1: Foundation (built and tested)**
-Admin console, Super Admin + 4-role RBAC, audit log, enrollment tokens with QR/link, Windows & macOS/Linux agents, device inventory/search/filters/CSV export, groups, dashboard, command queue, Docker deploy.
+Admin console, Super Admin + 4-role RBAC, audit log, enrollment keys, the Windows agent .exe, device inventory/search/filters/CSV export, groups, dashboard, command queue, Docker deploy.
 
 **Phase 2: Control (≈ 4–6 weeks)**
 * Apple MDM: APNs cert upload, enrollment profile (.mobileconfig) signing, check-in/command endpoints, ABM/ADE sync. Lock, wipe, lost mode, restrictions.

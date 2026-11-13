@@ -8,8 +8,10 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..db import get_db
+from ..enroll_key import normalize_key
 from ..models import PLATFORMS, Device, DeviceCommand, EnrollmentToken, utcnow
-from ..security import audit, client_ip, get_current_device, hash_secret, new_device_secret
+from ..security import (audit, clear_enroll_failures, client_ip, enroll_attempts_exceeded,
+                        get_current_device, hash_secret, new_device_secret, record_enroll_failure)
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
@@ -80,11 +82,23 @@ def enroll(body: EnrollIn, request: Request, db: Session = Depends(get_db)):
     platform = body.platform.lower()
     if platform not in PLATFORMS:
         raise HTTPException(400, f"Unsupported platform. Use one of {PLATFORMS}")
-    t = db.scalar(select(EnrollmentToken).where(EnrollmentToken.token == body.token).with_for_update())
+
+    ip = client_ip(request)
+    if enroll_attempts_exceeded(ip):
+        raise HTTPException(429, "Too many failed enrollment attempts. Wait a few minutes and try again.")
+
+    # The user typed this key by hand, so accept any casing/spacing and the
+    # 0/O and 1/I/L confusions; reject anything that isn't key-shaped before
+    # touching the database.
+    key = normalize_key(body.token)
+    t = db.scalar(select(EnrollmentToken).where(EnrollmentToken.token == key).with_for_update()) if key else None
     if not t or not t.is_usable():
-        raise HTTPException(403, "Enrollment token is invalid, expired, revoked or used up")
+        record_enroll_failure(ip)
+        raise HTTPException(403, "That enrollment key is invalid, expired, revoked or already used up.")
     if t.platform and t.platform != platform:
-        raise HTTPException(403, f"This token only enrolls {t.platform} devices")
+        record_enroll_failure(ip)
+        raise HTTPException(403, f"This key only enrolls {t.platform} devices")
+    clear_enroll_failures(ip)
 
     inv = body.inventory
     # Re-enrollment: same hardware id on same platform replaces the old record's credentials.

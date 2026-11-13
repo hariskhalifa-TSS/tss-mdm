@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app.enroll_key import normalize_key
 from app.main import app  # noqa: E402
 
 NEW_PW = "Brand-New-Pass-456!"
@@ -46,7 +47,6 @@ def test_health_and_ui(client):
     r = client.get("/")
     assert r.status_code == 200 and "TSS MDM" in r.text
     assert "Content-Security-Policy" in r.headers
-    assert client.get("/downloads/tss-agent.ps1").status_code == 200
     assert client.get("/downloads/../../etc/passwd").status_code == 404
 
 
@@ -97,10 +97,11 @@ def test_enrollment_inventory_and_commands(client, su):
     t = client.post("/api/enrollment/tokens", headers=su, json={
         "name": "Bandra tablets", "platform": "android", "group_id": g["id"], "max_uses": 2,
         "assigned_user": "store.bandra@tss.test"}).json()
-    assert t["usable"] and t["enroll_url"].endswith(t["token"])
-    assert client.get(f"/api/enrollment/tokens/{t['id']}/qr", headers=su).headers["content-type"] == "image/png"
-    assert client.get(f"/enroll/{t['token']}").status_code == 200
-    assert client.get("/enroll/bogus").status_code == 404
+    assert t["usable"] and "enroll_url" not in t
+    assert normalize_key(t["token"]) == t["token"]  # the API hands back a canonical key
+    # The QR endpoint and the public landing page are gone: a key is the whole flow.
+    assert client.get(f"/api/enrollment/tokens/{t['id']}/qr", headers=su).status_code == 404
+    assert client.get(f"/enroll/{t['token']}").status_code == 404
 
     inv = {"name": "Tab-01", "model": "Galaxy Tab A9", "manufacturer": "Samsung", "os_version": "14",
            "serial_number": "R9XYZ", "hardware_id": "hw-1", "battery_level": 15, "storage_total_gb": 64,
@@ -233,20 +234,52 @@ def test_checkin_advertises_agent_version(client, su):
     assert r["latest_agent_version"] and r["checkin_interval_seconds"] == 10
 
 
-def test_installer_download(client, su):
-    t = client.post("/api/enrollment/tokens", headers=su, json={"name": "Head Office"}).json()
-    r = client.get(f"/api/enrollment/tokens/{t['id']}/installer?os=windows", headers=su)
-    assert r.status_code == 200
-    assert "TSS-MDM-Setup-Head-Office.bat" in r.headers["content-disposition"]
-    assert t["token"] in r.text and "RunAs" in r.text and "\r\n" in r.text  # token baked in, self-elevating, CRLF
-    assert "downloads/tss-agent.ps1" in r.text
-    mac = client.get(f"/api/enrollment/tokens/{t['id']}/installer?os=macos", headers=su)
-    assert mac.status_code == 200 and t["token"] in mac.text and ".command" in mac.headers["content-disposition"]
-    # viewer can't download; bad os rejected; revoked token rejected
-    assert client.get(f"/api/enrollment/tokens/{t['id']}/installer?os=beos", headers=su).status_code == 400
-    client.post(f"/api/enrollment/tokens/{t['id']}/revoke", headers=su)
-    assert client.get(f"/api/enrollment/tokens/{t['id']}/installer", headers=su).status_code == 400
+def test_agent_exe_download(client, su):
+    """The one download: the agent installer, which anyone can fetch (it holds no secrets)."""
+    r = client.get("/downloads/TSS-MDM-Agent.exe")
+    assert r.status_code in (200, 404)  # 404 only when the CI-built exe isn't checked out
+    assert client.get("/downloads/anything-else.ps1").status_code == 404
 
+
+def test_keys_are_typed_by_humans(client, su):
+    """A key typed with the wrong case/spacing, or with 0/O and 1/I/L swapped, still works."""
+    t = client.post("/api/enrollment/tokens", headers=su, json={"name": "Typing"}).json()
+    key = t["token"]
+    assert key.startswith("TSSM-") and len(key) == 14
+
+    sloppy = key.lower().replace("-", " ")
+    r = client.post("/api/agent/enroll", json={"token": sloppy, "platform": "windows",
+                                               "inventory": {"hardware_id": "typo-pc"}})
+    assert r.status_code == 201, r.text
+
+    # Same PC, key typed yet another way -> still one device, not a duplicate.
+    again = client.post("/api/agent/enroll", json={"token": key.replace("-", ""), "platform": "windows",
+                                                   "inventory": {"hardware_id": "typo-pc"}})
+    assert again.status_code == 201
+    assert again.json()["device_id"] == r.json()["device_id"]
+    assert client.get("/api/devices?q=typo-pc", headers=su).json()["total"] <= 1
+
+    # Garbage never reaches the database.
+    assert client.post("/api/agent/enroll", json={"token": "hello", "platform": "windows",
+                                                  "inventory": {}}).status_code == 403
+
+
+def test_enroll_brute_force_is_rate_limited(client, su):
+    """Short keys are only safe because guessing them at machine speed is blocked."""
+    import app.security as security
+    security._enroll_fails.clear()
+    try:
+        codes = [client.post("/api/agent/enroll",
+                             json={"token": f"TSSM-AAAA-{i:04d}", "platform": "windows",
+                                   "inventory": {}}).status_code
+                 for i in range(security.ENROLL_FAIL_LIMIT + 2)]
+        assert codes[0] == 403 and codes[-1] == 429
+        # A valid key is refused too while the IP is cooling off.
+        t = client.post("/api/enrollment/tokens", headers=su, json={"name": "blocked"}).json()
+        assert client.post("/api/agent/enroll", json={"token": t["token"], "platform": "windows",
+                                                      "inventory": {}}).status_code == 429
+    finally:
+        security._enroll_fails.clear()
 
 def test_audit_log_records_actions(client, su):
     actions = {a["action"] for a in client.get("/api/audit?page_size=500", headers=su).json()["items"]}

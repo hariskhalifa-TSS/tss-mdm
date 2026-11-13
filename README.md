@@ -6,8 +6,7 @@ In-house Mobile Device Management for The Souled Store. Phase 1 ships the admin 
 server/            FastAPI backend + web console (server/app/static)
   app/routers/     auth, users, devices+groups, enrollment, agent, dashboard+audit
   tests/           pytest suite (SQLite or PostgreSQL)
-agents/windows/    tss-agent.ps1    Windows 10/11 agent (scheduled task, every 5 min)
-agents/python/     tss_agent.py     macOS / Linux agent (launchd / systemd)
+agents/rust/       tss-agent.exe    the one agent: enrollment window + background service
 scripts/manage.py  create-superadmin / reset-password CLI
 scripts/simulate_devices.py   enroll fake Android/iOS/macOS/Windows devices
 ```
@@ -33,10 +32,37 @@ Caddy obtains a Let's Encrypt certificate for `MDM_DOMAIN` automatically (open p
 
 ## Enroll a device
 
-Console → **Enrollment** → *New enrollment token* → **QR & install**.
-* **Windows** (PowerShell as admin): copy the one-liner shown. It enrolls and installs a SYSTEM scheduled task.
-* **macOS/Linux**: `curl -fsSLO https://<server>/downloads/tss_agent.py && sudo python3 tss_agent.py --server https://<server> --token <TOKEN> --install`
-* **Demo data**: `python scripts/simulate_devices.py --server http://localhost:8000 --token <TOKEN> --count 20`
+Enrollment is a key and an .exe. Nothing else — no QR code, no link, no commands to copy.
+
+1. Console → **Enrollment** → **+ New enrollment key**. You get a key like `TSSM-4K7P-9XQ2`.
+2. On the PC, run **TSS-MDM-Agent.exe** (download it from the same screen, or from
+   `https://<server>/downloads/TSS-MDM-Agent.exe`) and approve the Windows admin prompt.
+3. Type the key, click **Enroll**. The device shows up in **Devices** within a few seconds.
+
+The key is forgiving: case, spaces, dashes and the usual `0`/`O` and `1`/`I`/`L` mix-ups
+all work. The server address is baked into the .exe, which is why the key is all anyone needs.
+
+**Mass deployment** (GPO, Intune, a login script) — same .exe, no window:
+
+```bat
+TSS-MDM-Agent.exe --key TSSM-4K7P-9XQ2
+```
+
+**Removing the agent**: `TSS-MDM-Agent.exe --uninstall`
+
+**Demo data**: `python scripts/simulate_devices.py --server http://localhost:8000 --token <KEY> --count 20`
+
+## Building the agent
+
+GitHub Actions (**Build Windows agent**) builds `agents/rust/dist/tss-agent.exe` and commits it
+so the server can serve it. The MDM address is baked in at build time:
+
+```bash
+MDM_SERVER_URL=https://mdm.thesouledstore.com cargo build --release --manifest-path agents/rust/Cargo.toml
+```
+
+Change `MDM_SERVER_URL` in `.github/workflows/build-windows-agent.yml` (or pass it when running
+the workflow manually) if the server moves. The build fails if the exe doesn't point where you asked.
 
 ## Roles
 
