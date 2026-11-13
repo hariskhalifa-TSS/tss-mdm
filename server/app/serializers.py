@@ -33,7 +33,6 @@ def token_out(t: EnrollmentToken) -> dict:
         "assigned_user": t.assigned_user, "group_id": t.group_id, "group_name": t.group.name if t.group else None,
         "max_uses": t.max_uses, "uses": t.uses, "expires_at": iso(t.expires_at), "revoked": t.revoked,
         "usable": t.is_usable(), "created_by": t.created_by, "created_at": iso(t.created_at),
-        "enroll_url": f"{settings.PUBLIC_URL}/enroll/{t.token}",
     }
 
 

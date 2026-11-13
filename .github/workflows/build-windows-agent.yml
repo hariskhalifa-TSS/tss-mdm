@@ -1,11 +1,16 @@
 name: Build Windows agent
+
 on:
   push:
     paths:
-      - 'agents/rust/src/**'
-      - 'agents/rust/Cargo.toml'
+      - 'agents/rust/**'
       - '.github/workflows/build-windows-agent.yml'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: 'MDM server baked into the .exe'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -14,24 +19,42 @@ concurrency:
   group: build-windows-agent
   cancel-in-progress: true
 
+env:
+  # The address the enrollment window talks to. Change it here (or via the
+  # workflow_dispatch input) -- nothing else in the agent needs editing.
+  MDM_SERVER_URL: ${{ github.event.inputs.server_url || 'https://tss-mdm-production.up.railway.app' }}
+
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+
       - name: Build release
         run: cargo build --release --manifest-path agents/rust/Cargo.toml
+
+      - name: Verify the baked-in server address
+        shell: pwsh
+        run: |
+          $out = & agents/rust/target/release/tss-agent.exe --version 2>&1 | Out-String
+          Write-Host $out
+          if ($out -notmatch [regex]::Escape($env:MDM_SERVER_URL)) {
+            throw "The built exe does not point at $env:MDM_SERVER_URL"
+          }
+
       - name: Stage binary
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path agents/rust/dist | Out-Null
           Copy-Item agents/rust/target/release/tss-agent.exe agents/rust/dist/tss-agent.exe -Force
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tss-agent-windows
+          name: TSS-MDM-Agent
           path: agents/rust/dist/tss-agent.exe
+
       - name: Commit built exe so the server can serve it
         shell: pwsh
         run: |

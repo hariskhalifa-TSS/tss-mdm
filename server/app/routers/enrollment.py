@@ -1,16 +1,13 @@
-import io
-import secrets
 from datetime import timedelta
 
-import qrcode
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..config import settings
 from ..db import get_db
+from ..enroll_key import generate_key
 from ..models import PLATFORMS, AdminUser, DeviceGroup, EnrollmentToken, utcnow
 from ..security import audit, require_role
 from ..serializers import token_out
@@ -31,7 +28,7 @@ class TokenIn(BaseModel):
 def _get(db, token_id) -> EnrollmentToken:
     t = db.get(EnrollmentToken, token_id)
     if not t:
-        raise HTTPException(404, "Enrollment token not found")
+        raise HTTPException(404, "Enrollment key not found")
     return t
 
 
@@ -49,14 +46,24 @@ def create_token(body: TokenIn, request: Request, db: Session = Depends(get_db),
         raise HTTPException(400, "Ownership must be corporate or byod")
     if body.group_id and not db.get(DeviceGroup, body.group_id):
         raise HTTPException(400, "Group not found")
-    t = EnrollmentToken(
-        token=secrets.token_urlsafe(18), name=body.name.strip() or "Enrollment", platform=body.platform,
-        ownership=body.ownership, assigned_user=(body.assigned_user or None), group_id=body.group_id,
-        max_uses=body.max_uses, created_by=me.email,
-        expires_at=utcnow() + timedelta(days=body.expires_in_days) if body.expires_in_days else None,
-    )
-    db.add(t)
-    db.flush()
+
+    # Keys are short enough that a collision, while very unlikely, is worth retrying.
+    for attempt in range(5):
+        t = EnrollmentToken(
+            token=generate_key(), name=body.name.strip() or "Enrollment", platform=body.platform,
+            ownership=body.ownership, assigned_user=(body.assigned_user or None), group_id=body.group_id,
+            max_uses=body.max_uses, created_by=me.email,
+            expires_at=utcnow() + timedelta(days=body.expires_in_days) if body.expires_in_days else None,
+        )
+        db.add(t)
+        try:
+            db.flush()
+            break
+        except IntegrityError:
+            db.rollback()
+    else:
+        raise HTTPException(500, "Could not allocate an enrollment key; try again")
+
     audit(db, request, me.email, "enrollment.token_created", "enrollment_token", t.id, name=t.name)
     db.commit()
     db.refresh(t)
@@ -71,35 +78,3 @@ def revoke_token(token_id: int, request: Request, db: Session = Depends(get_db),
     audit(db, request, me.email, "enrollment.token_revoked", "enrollment_token", t.id)
     db.commit()
     return token_out(t)
-
-
-@router.get("/api/enrollment/tokens/{token_id}/qr")
-def token_qr(token_id: int, db: Session = Depends(get_db), _=Depends(require_role("technician"))):
-    t = _get(db, token_id)
-    img = qrcode.make(f"{settings.PUBLIC_URL}/enroll/{t.token}", box_size=8, border=2)
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return Response(buf.getvalue(), media_type="image/png")
-
-
-@router.get("/enroll/{token}", response_class=HTMLResponse)
-def enroll_landing(token: str, db: Session = Depends(get_db)):
-    """Public page a user lands on after scanning the QR code: shows per-platform steps."""
-    t = db.scalar(select(EnrollmentToken).where(EnrollmentToken.token == token))
-    if not t or not t.is_usable():
-        return HTMLResponse("<h2 style='font-family:sans-serif'>This enrollment link is invalid or has expired.</h2>"
-                            "<p style='font-family:sans-serif'>Ask your IT team for a new one.</p>", status_code=404)
-    url = settings.PUBLIC_URL
-    ps = (f"powershell -ExecutionPolicy Bypass -Command \"iwr {url}/downloads/tss-agent.ps1 -OutFile $env:TEMP\\tss-agent.ps1; "
-          f"& $env:TEMP\\tss-agent.ps1 -Server {url} -Token {t.token} -Install\"")
-    py = f"curl -fsSLO {url}/downloads/tss_agent.py && sudo python3 tss_agent.py --server {url} --token {t.token} --install"
-    return HTMLResponse(f"""<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1">
-<title>Enroll device · {settings.APP_NAME}</title><style>body{{font-family:system-ui,sans-serif;max-width:680px;margin:32px auto;padding:0 16px;color:#1d2333}}
-code,pre{{background:#f1f3f8;border-radius:6px;padding:10px;display:block;white-space:pre-wrap;word-break:break-all;font-size:13px}}
-h1{{font-size:22px}} .card{{border:1px solid #e3e6ee;border-radius:10px;padding:16px;margin:12px 0}}</style></head><body>
-<h1>Enroll this device in {settings.APP_NAME}</h1><p>Enrollment profile: <b>{t.name}</b> ({t.ownership})</p>
-<div class=card><h3>Windows 10/11</h3><p>Open PowerShell <b>as Administrator</b> and run:</p><code>{ps}</code></div>
-<div class=card><h3>macOS / Linux</h3><p>Open Terminal and run:</p><code>{py}</code></div>
-<div class=card><h3>Android</h3><p>The TSS Agent app (Android Enterprise) is part of the next release. Your enrollment code is:</p><code>{t.token}</code></div>
-<div class=card><h3>iPhone / iPad</h3><p>Apple enrollment needs an APNs certificate and Apple Business Manager; it is part of the next release.</p></div>
-</body></html>""")

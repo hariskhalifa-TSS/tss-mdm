@@ -9,13 +9,15 @@ from sqlalchemy import select
 from .config import BASE_DIR, DATA_DIR, settings
 from .db import Base, SessionLocal, engine
 from .models import AdminUser
-from .routers import agent, auth, dashboard, devices, enrollment, installer, users
+from .routers import agent, auth, dashboard, devices, enrollment, users
 from .security import generate_password, hash_password
 
 log = logging.getLogger("tss-mdm")
 STATIC = BASE_DIR / "app" / "static"
-DOWNLOADS = {"tss-agent.ps1": "windows/tss-agent.ps1", "tss_agent.py": "python/tss_agent.py",
-             "tss-agent.exe": "rust/dist/tss-agent.exe"}
+# The one thing a device ever downloads: the agent installer. `tss-agent.exe` is kept
+# as an alias so anything already pointing at the old name keeps working.
+AGENT_EXE = "rust/dist/tss-agent.exe"
+DOWNLOADS = {"TSS-MDM-Agent.exe": AGENT_EXE, "tss-agent.exe": AGENT_EXE}
 
 
 def bootstrap_super_admin():
@@ -87,7 +89,7 @@ async def security_headers(request: Request, call_next):
     return resp
 
 
-for r in (auth.router, users.router, devices.router, enrollment.router, installer.router, agent.router, dashboard.router):
+for r in (auth.router, users.router, devices.router, enrollment.router, agent.router, dashboard.router):
     app.include_router(r)
 
 

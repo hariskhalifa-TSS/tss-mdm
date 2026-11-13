@@ -43,7 +43,7 @@ class Settings:
     SUPERADMIN_PASSWORD = os.getenv("MDM_SUPERADMIN_PASSWORD")  # random if unset
     AGENTS_DIR = Path(os.getenv("MDM_AGENTS_DIR", BASE_DIR.parent / "agents"))
     # Latest agent version the server ships. Bump when agents/ changes so devices self-update.
-    AGENT_VERSION = os.getenv("MDM_AGENT_VERSION", "0.4.0")
+    AGENT_VERSION = os.getenv("MDM_AGENT_VERSION", "1.0.0")
 
 
 settings = Settings()
